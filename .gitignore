@@ -2,3 +2,5 @@
 env/
 .vscode/
 *.sqlite3
+dist/
+*.egg-info
