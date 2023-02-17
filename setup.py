@@ -1,5 +1,5 @@
 import os
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 with open(os.path.join(os.path.dirname(__file__), 'README.md')) as readme:
@@ -15,7 +15,7 @@ os.chdir(os.path.normpath(os.path.join(os.path.abspath(__file__), os.pardir)))
 setup(
     name='e89-drf-utils',
     version='0.2.0',
-    packages=['drf_utils'],
+    packages=find_packages(exclude=['test_app']),
     include_package_data=True,
     license='MIT License',
     license_files=('LICENSE.txt',),
