@@ -1,10 +1,23 @@
-from django.test import TestCase
-from .models import Profile, Address, Author, Category, Book
-from .serializers import ProfileSerializer, BookSerializer, BookWithAuthorsSerializer, AuthorWithProfileSerializer, ProfileWithAuthorSerializer, AddressWithProfileSerializer
 import datetime as dt
+import json
+
+from django.test import TestCase
+
+from .models import Address, Author, Book, Category, Profile
+from .serializers import (
+    AddressWithProfileSerializer,
+    AuthorWithProfileSerializer,
+    BookSerializer,
+    BookWithAuthorsSerializer,
+    CategorySerializer,
+    ProfileSerializer,
+    ProfileWithAuthorSerializer,
+)
+from drf_utils.nesting import save_nested_choice_serializers, NestedRelationChoiceField
+from rest_framework.serializers import ModelSerializer
+
 
 class AppTest(TestCase):
-
     def test_nested_strategy_with_foreign_key(self):
         # Setup
         profile = Profile.objects.create(birth_date=dt.date(2023, 2, 16))
@@ -86,7 +99,6 @@ class AppTest(TestCase):
         profile.refresh_from_db()
         self.assertEqual(profile.birth_date, dt.date(2023, 2, 17))
 
-
     def test_nested_strategy_with_reverse_foreign_key(self):
         # Setup
         profile = Profile.objects.create(birth_date=dt.date(2023, 2, 16))
@@ -110,7 +122,6 @@ class AppTest(TestCase):
         self.assertEqual(data["addresses"][0]["number"], address.number)
         self.assertEqual(data["addresses"][0]["neighborhood"], address.neighborhood)
         self.assertEqual(len(data["addresses"]), 1)
-
 
         # Update model instance with new data
         new_data = {
@@ -328,7 +339,6 @@ class AppTest(TestCase):
         with self.assertRaises(Profile.DoesNotExist):
             profile.refresh_from_db()
 
-
     def test_nested_strategy_with_reverse_one_to_one_field(self):
         author1 = Author.objects.create(name="author1")
         profile = Profile.objects.create(birth_date=dt.date(2020, 2, 16))
@@ -414,7 +424,6 @@ class AppTest(TestCase):
         self.assertEqual(address.street, "new street 2")
         self.assertEqual(address.number, "new number 2")
         self.assertEqual(address.neighborhood, "new neighborhood 2")
-
 
     def test_choice_strategy(self):
         category1 = Category.objects.create(name="category1")
@@ -514,6 +523,138 @@ class AppTest(TestCase):
         self.assertEqual(author1.name, "author1")
         self.assertEqual(author2.name, "author2")
 
+    def test_choice_strategy_with_custom_queryset(self):
+        @save_nested_choice_serializers(["category"])
+        class CustomBookSerializer(ModelSerializer):
+            category = NestedRelationChoiceField(
+                allow_null=False,
+                serializer_class=CategorySerializer,
+                queryset=Category.objects.filter(name__contains="filtered"),
+            )
 
+            class Meta:
+                model = Book
+                fields = (
+                    "id",
+                    "title",
+                    "category",
+                )
 
+        category1 = Category.objects.create(name="filtered_category1")
+        category2 = Category.objects.create(name="filtered_category2")
+        category3 = Category.objects.create(name="category3")
 
+        book = Book.objects.create(title="book1", category=category1)
+
+        # Serialize model instance
+        book_serializer = CustomBookSerializer(book)
+        data = book_serializer.data
+
+        self.assertEqual(data["id"], book.id)
+        self.assertEqual(data["title"], book.title)
+        self.assertEqual(data["category"]["id"], category1.id)
+        self.assertEqual(data["category"]["name"], category1.name)
+
+        # Update model instance with new data
+        new_data = {
+            "id": book.id,
+            "title": "new book title",
+            "category": {"id": category2.id, "name": category2.name},
+        }
+        book_serializer = CustomBookSerializer(book, data=new_data)
+        book_serializer.is_valid(raise_exception=True)
+        book_serializer.save()
+
+        # Check if model instance was updated
+        book.refresh_from_db()
+        category1.refresh_from_db()
+        category2.refresh_from_db()
+        self.assertEqual(Book.objects.count(), 1)
+        self.assertEqual(book.title, "new book title")
+        self.assertEqual(book.category_id, category2.id)
+        self.assertEqual(category1.books.count(), 0)
+        self.assertEqual(category2.books.count(), 1)
+        self.assertEqual(category1.name, "filtered_category1")
+        self.assertEqual(category2.name, "filtered_category2")
+
+        # Try to update model instance with new data using a category that is not in the queryset
+        new_data = {
+            "id": book.id,
+            "title": "new book title",
+            "category": {"id": category3.id, "name": category3.name},
+        }
+        book_serializer = CustomBookSerializer(book, data=new_data)
+        self.assertFalse(book_serializer.is_valid())
+        self.assertEqual(
+            json.dumps(book_serializer.errors),
+            '{"category": ["Invalid choice: 3"]}',
+        )
+
+    def test_choice_strategy_with_dynamic_queryset(self):
+        @save_nested_choice_serializers(["category"])
+        class CustomBookSerializer(ModelSerializer):
+            category = NestedRelationChoiceField(
+                allow_null=False,
+                serializer_class=CategorySerializer,
+                queryset=lambda instance, context: Category.objects.filter(
+                    name__startswith=instance.title
+                ),
+            )
+
+            class Meta:
+                model = Book
+                fields = (
+                    "id",
+                    "title",
+                    "category",
+                )
+
+        category1 = Category.objects.create(name="filtered_category1")
+        category2 = Category.objects.create(name="filtered_category2")
+        category3 = Category.objects.create(name="category3")
+
+        book = Book.objects.create(title="filtered", category=category1)
+
+        # Serialize model instance
+        book_serializer = CustomBookSerializer(book)
+        data = book_serializer.data
+
+        self.assertEqual(data["id"], book.id)
+        self.assertEqual(data["title"], book.title)
+        self.assertEqual(data["category"]["id"], category1.id)
+        self.assertEqual(data["category"]["name"], category1.name)
+
+        # Update model instance with new data
+        new_data = {
+            "id": book.id,
+            "title": "new book title",
+            "category": {"id": category2.id, "name": category2.name},
+        }
+        book_serializer = CustomBookSerializer(book, data=new_data)
+        book_serializer.is_valid(raise_exception=True)
+        book_serializer.save()
+
+        # Check if model instance was updated
+        book.refresh_from_db()
+        category1.refresh_from_db()
+        category2.refresh_from_db()
+        self.assertEqual(Book.objects.count(), 1)
+        self.assertEqual(book.title, "new book title")
+        self.assertEqual(book.category_id, category2.id)
+        self.assertEqual(category1.books.count(), 0)
+        self.assertEqual(category2.books.count(), 1)
+        self.assertEqual(category1.name, "filtered_category1")
+        self.assertEqual(category2.name, "filtered_category2")
+
+        # Try to update model instance with new data using a category that is not in the queryset
+        new_data = {
+            "id": book.id,
+            "title": "new book title",
+            "category": {"id": category3.id, "name": category3.name},
+        }
+        book_serializer = CustomBookSerializer(book, data=new_data)
+        self.assertFalse(book_serializer.is_valid())
+        self.assertEqual(
+            json.dumps(book_serializer.errors),
+            '{"category": ["Invalid choice: 3"]}',
+        )

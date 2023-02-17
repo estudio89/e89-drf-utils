@@ -384,13 +384,15 @@ class NestedListSerializer(serializers.ListSerializer):
 
 
 class NestedRelationChoiceField(serializers.RelatedField):
-    """Classe para ser utilizada em conjunto com o decorator save_nested_choice_serializers."""
-
+    """This field is used to represent a nested relationship in a serializer that uses the CHOICE strategy. It should be used in conjunction with the save_nested_choice_serializers decorator."""
+    default_error_messages = {
+        "invalid_choice": "Invalid choice: {pk_value}",
+    }
     def __init__(self, **kwargs):
         """Args:
-        serializer_class: Classe do serializer que será utilizado para serializar o objeto.
-        serializer_params: Dicionário com parâmetros que se deseja passar ao construtor do serializer.
-        queryset: Queryset que será utilizado para recuperar o objeto. Caso não seja passado, será utilizado o queryset padrão do model (.all()).
+        serializer_class: Serializer class that will be used to serialize the nested object.
+        serializer_params: Dictionary of parameters that will be passed to the serializer.
+        queryset: Queryset that will be used to retrieve the object. If not provided, the queryset will be the default queryset of the model defined in the serializer class. If the queryset is a callable, it will be called with the parent instance and the serializer context as parameters.
 
         """
         self.serializer_class = kwargs.pop("serializer_class")
@@ -405,9 +407,19 @@ class NestedRelationChoiceField(serializers.RelatedField):
     def to_representation(self, value):
         return self.serializer_class(instance=value, **self.serializer_params).data
 
+    def get_queryset(self):
+        # Check if the queryset is a callable
+        if callable(self.queryset):
+            return self.queryset(self.parent.instance, self.parent.context)
+        return super().get_queryset()
+
     def to_internal_value(self, data):
         if not isinstance(data, self.model):
-            instance = self.model.objects.get(id=data["id"])
+            try:
+                instance = self.get_queryset().get(id=data["id"])
+            except self.model.DoesNotExist:
+                self.fail("invalid_choice", pk_value=data["id"])
+                return
         else:
             instance = data
         return instance
