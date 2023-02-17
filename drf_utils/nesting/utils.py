@@ -44,7 +44,7 @@ def save_nested_choice_serializers(field_names: "List[str]") -> "Callable":
 
     The CHOICE strategy is used when the nested serializer will never be created or updated, only the relationship with the parent object will be created / updated.
 
-    This decorator must be used in conjunction with the NestedRelationChoiceField class.
+    This decorator must be used in conjunction with the NestedRelationChoiceField class. For ManyToManyField relationships, make sure to pass the many=True argument to the NestedRelationChoiceField constructor.
 
     Args:
         field_names (List[str]): List of names of the serializer fields that contain the nested serializers.
@@ -393,7 +393,7 @@ class NestedRelationChoiceField(serializers.RelatedField):
         serializer_class: Serializer class that will be used to serialize the nested object.
         serializer_params: Dictionary of parameters that will be passed to the serializer.
         queryset: Queryset that will be used to retrieve the object. If not provided, the queryset will be the default queryset of the model defined in the serializer class. If the queryset is a callable, it will be called with the parent instance and the serializer context as parameters.
-
+        many: pass True if the relationship is a many-to-many relationship.
         """
         self.serializer_class = kwargs.pop("serializer_class")
         self.serializer_params = kwargs.pop("serializer_params", {})
@@ -415,6 +415,8 @@ class NestedRelationChoiceField(serializers.RelatedField):
 
     def to_internal_value(self, data):
         if not isinstance(data, self.model):
+            if not isinstance(data, dict):
+                raise ValueError("Invalid data type. Expected a dictionary. Did you forget to pass the parameter 'many=True'?")
             try:
                 instance = self.get_queryset().get(id=data["id"])
             except self.model.DoesNotExist:
